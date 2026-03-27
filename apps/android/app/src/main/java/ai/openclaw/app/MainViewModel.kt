@@ -12,6 +12,9 @@ import ai.openclaw.app.gateway.GatewayEndpoint
 import ai.openclaw.app.node.CameraCaptureManager
 import ai.openclaw.app.node.CanvasController
 import ai.openclaw.app.node.SmsManager
+import ai.openclaw.app.vault.CloudAuthRequest
+import ai.openclaw.app.vault.LeaseDuration
+import ai.openclaw.app.vault.PermissionLease
 import ai.openclaw.app.voice.VoiceConversationEntry
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -104,6 +107,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
   val chatPendingToolCalls: StateFlow<List<ChatPendingToolCall>> = runtimeState(initial = emptyList()) { it.chatPendingToolCalls }
   val chatSessions: StateFlow<List<ChatSessionEntry>> = runtimeState(initial = emptyList()) { it.chatSessions }
   val pendingRunCount: StateFlow<Int> = runtimeState(initial = 0) { it.pendingRunCount }
+
+  // Vault -----------------------------------------------------------------
+  val pendingVaultRequest: StateFlow<CloudAuthRequest?> = runtimeState(initial = null) { it.pendingVaultRequest }
+  val vaultLeases: StateFlow<List<PermissionLease>> = runtimeState(initial = emptyList()) { it.vaultLeases }
+  val vaultBatchRequests: StateFlow<List<CloudAuthRequest>> = runtimeState(initial = emptyList()) { it.vaultRequestQueue.pendingBatch }
+  val cloudGatewayEnabled: StateFlow<Boolean> = prefs.cloudGatewayEnabled
+  val quietHoursEnabled: StateFlow<Boolean> = prefs.quietHoursEnabled
+  val quietHoursStartHour: StateFlow<Int> = prefs.quietHoursStartHour
+  val quietHoursEndHour: StateFlow<Int> = prefs.quietHoursEndHour
 
   init {
     if (prefs.onboardingCompleted.value) {
@@ -276,4 +288,62 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
   fun sendChat(message: String, thinking: String, attachments: List<OutgoingAttachment>) {
     ensureRuntime().sendChat(message = message, thinking = thinking, attachments = attachments)
   }
+
+  // Vault -----------------------------------------------------------------
+
+  fun approveVaultRequest(leaseDuration: LeaseDuration?) {
+    runtimeRef.value?.approveVaultRequest(leaseDuration)
+  }
+
+  fun denyVaultRequest() {
+    runtimeRef.value?.denyVaultRequest()
+  }
+
+  fun revokeVaultLease(actionKey: String) {
+    runtimeRef.value?.revokeVaultLease(actionKey)
+  }
+
+  fun upgradeVaultLease(actionKey: String, duration: LeaseDuration) {
+    runtimeRef.value?.upgradeVaultLease(actionKey, duration)
+  }
+
+  /** Approves all queued batch requests at once (morning briefing). */
+  fun approveBatchRequests() {
+    val runtime = runtimeRef.value ?: return
+    val batch = runtime.vaultRequestQueue.drainBatch()
+    batch.forEach { request ->
+      runtime.leaseManager.recordApproval(request.actionKey, request.tier)
+      runtime.sendBatchApproval(request.requestId)
+    }
+    if (batch.isNotEmpty()) {
+      runtime.refreshVaultLeases()
+    }
+  }
+
+  /** Dismisses a single queued batch request without approving it. */
+  fun dismissBatchRequest(requestId: String) {
+    runtimeRef.value?.vaultRequestQueue?.remove(requestId)
+  }
+
+  fun setCloudGatewayEnabled(value: Boolean) {
+    prefs.setCloudGatewayEnabled(value)
+  }
+
+  fun setCloudGatewayUrl(value: String) {
+    prefs.setCloudGatewayUrl(value)
+  }
+
+  fun setQuietHoursEnabled(value: Boolean) {
+    prefs.setQuietHoursEnabled(value)
+  }
+
+  fun setQuietHoursStartHour(hour: Int) {
+    prefs.setQuietHoursStartHour(hour)
+  }
+
+  fun setQuietHoursEndHour(hour: Int) {
+    prefs.setQuietHoursEndHour(hour)
+  }
+
+  val vaultUpgradeThreshold: Int get() = runtimeRef.value?.leaseManager?.progressiveTrustThreshold ?: 10
 }

@@ -348,4 +348,81 @@ class SecurePrefs(
       defaultWakeWords
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Vault prefs – a dedicated SharedPreferences file for lease records so the
+  // PermissionLeaseManager can enumerate all keys without scanning unrelated ones.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns the SharedPreferences that backs [ai.openclaw.app.vault.PermissionLeaseManager].
+   * Uses a plain (non-encrypted) file for now so that Robolectric tests can use it
+   * without the crypto stack. Production can swap to EncryptedSharedPreferences by
+   * passing [securePrefs] here if desired.
+   */
+  fun vaultPrefs(): SharedPreferences =
+    appContext.getSharedPreferences("openclaw.vault.leases", Context.MODE_PRIVATE)
+
+  // ---------------------------------------------------------------------------
+  // Cloud gateway prefs (M2) – stored in the secure prefs file.
+  // ---------------------------------------------------------------------------
+
+  private val _cloudGatewayEnabled =
+    MutableStateFlow(plainPrefs.getBoolean("cloud.gateway.enabled", false))
+  val cloudGatewayEnabled: StateFlow<Boolean> = _cloudGatewayEnabled
+
+  private val _cloudGatewayUrl = MutableStateFlow("")
+  val cloudGatewayUrl: StateFlow<String> = _cloudGatewayUrl
+
+  fun setCloudGatewayEnabled(value: Boolean) {
+    plainPrefs.edit { putBoolean("cloud.gateway.enabled", value) }
+    _cloudGatewayEnabled.value = value
+  }
+
+  fun loadCloudGatewayUrl(): String {
+    val stored = securePrefs.getString("cloud.gateway.url", null)?.trim() ?: ""
+    if (_cloudGatewayUrl.value.isEmpty() && stored.isNotEmpty()) {
+      _cloudGatewayUrl.value = stored
+    }
+    return stored
+  }
+
+  fun setCloudGatewayUrl(value: String) {
+    val trimmed = value.trim()
+    securePrefs.edit { putString("cloud.gateway.url", trimmed) }
+    _cloudGatewayUrl.value = trimmed
+  }
+
+  // ---------------------------------------------------------------------------
+  // Quiet Hours prefs (M4) – stored in plain prefs.
+  // ---------------------------------------------------------------------------
+
+  private val _quietHoursEnabled =
+    MutableStateFlow(plainPrefs.getBoolean("vault.quietHours.enabled", false))
+  val quietHoursEnabled: StateFlow<Boolean> = _quietHoursEnabled
+
+  /** Quiet window start: hour-of-day in 24 h format (0–23). Default 22 (10 pm). */
+  private val _quietHoursStartHour =
+    MutableStateFlow(plainPrefs.getInt("vault.quietHours.startHour", 22))
+  val quietHoursStartHour: StateFlow<Int> = _quietHoursStartHour
+
+  /** Quiet window end: hour-of-day in 24 h format (0–23). Default 8 (8 am). */
+  private val _quietHoursEndHour =
+    MutableStateFlow(plainPrefs.getInt("vault.quietHours.endHour", 8))
+  val quietHoursEndHour: StateFlow<Int> = _quietHoursEndHour
+
+  fun setQuietHoursEnabled(value: Boolean) {
+    plainPrefs.edit { putBoolean("vault.quietHours.enabled", value) }
+    _quietHoursEnabled.value = value
+  }
+
+  fun setQuietHoursStartHour(hour: Int) {
+    plainPrefs.edit { putInt("vault.quietHours.startHour", hour.coerceIn(0, 23)) }
+    _quietHoursStartHour.value = hour.coerceIn(0, 23)
+  }
+
+  fun setQuietHoursEndHour(hour: Int) {
+    plainPrefs.edit { putInt("vault.quietHours.endHour", hour.coerceIn(0, 23)) }
+    _quietHoursEndHour.value = hour.coerceIn(0, 23)
+  }
 }

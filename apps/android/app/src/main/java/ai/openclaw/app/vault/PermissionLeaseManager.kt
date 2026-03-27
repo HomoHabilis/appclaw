@@ -96,7 +96,7 @@ class PermissionLeaseManager(
         val raw = prefs.getString(leaseKey(actionKey), null) ?: return null
         return try {
             json.decodeFromString<PermissionLease>(raw)
-        } catch (_: Throwable) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -125,7 +125,7 @@ class PermissionLeaseManager(
                 val raw = prefs.getString(prefKey, null) ?: return@mapNotNull null
                 try {
                     json.decodeFromString<PermissionLease>(raw)
-                } catch (_: Throwable) {
+                } catch (_: Exception) {
                     null
                 }
             }
@@ -135,6 +135,19 @@ class PermissionLeaseManager(
             }
             .map { it.actionKey }
     }
+
+    /** Returns all stored lease records regardless of expiry. */
+    fun allLeases(): List<PermissionLease> =
+        prefs.all.keys
+            .filter { it.startsWith(LEASE_PREFIX) }
+            .mapNotNull { prefKey ->
+                val raw = prefs.getString(prefKey, null) ?: return@mapNotNull null
+                try {
+                    json.decodeFromString<PermissionLease>(raw)
+                } catch (_: Exception) {
+                    null
+                }
+            }
 
     // ------------------------------------------------------------------
     // Internals

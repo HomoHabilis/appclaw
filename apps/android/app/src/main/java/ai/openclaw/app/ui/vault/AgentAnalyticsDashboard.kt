@@ -56,6 +56,9 @@ import ai.openclaw.app.vault.PermissionTier
  * [upgradeThreshold]    — number of approvals before an upgrade is suggested.
  * [onGrantLease]        — called when the user accepts an upgrade suggestion.
  * [onRevokeLease]       — called when the user taps "Revoke" on a lease card.
+ * [batchRequests]       — queued requests from the morning briefing.
+ * [onApproveBatch]      — called when user taps "Approve all" in the briefing.
+ * [onDismissBatchItem]  — called to dismiss a single queued request.
  */
 @Composable
 fun AgentAnalyticsDashboard(
@@ -63,6 +66,9 @@ fun AgentAnalyticsDashboard(
     upgradeThreshold: Int,
     onGrantLease: (actionKey: String, duration: LeaseDuration) -> Unit,
     onRevokeLease: (actionKey: String) -> Unit,
+    batchRequests: List<ai.openclaw.app.vault.CloudAuthRequest> = emptyList(),
+    onApproveBatch: () -> Unit = {},
+    onDismissBatchItem: (requestId: String) -> Unit = {},
 ) {
     val colors = LocalMobileColors.current
     val suggestions = leases.filter { it.approvalCount >= upgradeThreshold && !hasLongLease(it) }
@@ -96,6 +102,15 @@ fun AgentAnalyticsDashboard(
             lineHeight = 20.sp,
             color = colors.textSecondary,
         )
+
+        if (batchRequests.isNotEmpty()) {
+            Spacer(Modifier.height(20.dp))
+            VaultBriefingCard(
+                requests = batchRequests,
+                onApproveAll = onApproveBatch,
+                onDismiss = onDismissBatchItem,
+            )
+        }
 
         if (suggestions.isNotEmpty()) {
             Spacer(Modifier.height(24.dp))
