@@ -207,6 +207,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
 
     implementation("androidx.security:security-crypto:1.1.0")
+    implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.exifinterface:exifinterface:1.4.2")
     implementation("com.squareup.okhttp3:okhttp:5.3.2")
     implementation("org.bouncycastle:bcprov-jdk18on:1.83")
