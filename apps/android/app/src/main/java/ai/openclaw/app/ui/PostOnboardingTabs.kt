@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.filled.ScreenShare
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
@@ -46,7 +47,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import ai.openclaw.app.MainActivity
 import ai.openclaw.app.MainViewModel
+import ai.openclaw.app.ui.vault.VaultTabScreen
 
 private enum class HomeTab(
   val label: String,
@@ -56,6 +59,7 @@ private enum class HomeTab(
   Chat(label = "Chat", icon = Icons.Default.ChatBubble),
   Voice(label = "Voice", icon = Icons.Default.RecordVoiceOver),
   Screen(label = "Screen", icon = Icons.AutoMirrored.Filled.ScreenShare),
+  Vault(label = "Vault", icon = Icons.Default.Security),
   Settings(label = "Settings", icon = Icons.Default.Settings),
 }
 
@@ -68,10 +72,18 @@ private enum class StatusVisual {
 }
 
 @Composable
-fun PostOnboardingTabs(viewModel: MainViewModel, modifier: Modifier = Modifier) {
+fun PostOnboardingTabs(viewModel: MainViewModel, activity: MainActivity, modifier: Modifier = Modifier) {
   var activeTab by rememberSaveable { mutableStateOf(HomeTab.Connect) }
   var chatTabStarted by rememberSaveable { mutableStateOf(false) }
   var screenTabStarted by rememberSaveable { mutableStateOf(false) }
+
+  // Auto-navigate to Vault tab when a cloud_auth_request arrives.
+  val pendingVaultRequest by viewModel.pendingVaultRequest.collectAsState()
+  LaunchedEffect(pendingVaultRequest) {
+    if (pendingVaultRequest != null) {
+      activeTab = HomeTab.Vault
+    }
+  }
 
   // Stop TTS when user navigates away from voice tab, and lazily keep the Chat/Screen tabs
   // alive after the first visit so repeated tab switches do not rebuild their UI trees.
@@ -160,6 +172,7 @@ fun PostOnboardingTabs(viewModel: MainViewModel, modifier: Modifier = Modifier) 
         HomeTab.Chat -> if (!chatTabStarted) ChatSheet(viewModel = viewModel)
         HomeTab.Voice -> VoiceTabScreen(viewModel = viewModel)
         HomeTab.Screen -> Unit
+        HomeTab.Vault -> VaultTabScreen(viewModel = viewModel, activity = activity)
         HomeTab.Settings -> SettingsSheet(viewModel = viewModel)
       }
     }

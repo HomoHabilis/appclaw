@@ -19,6 +19,14 @@ import ai.openclaw.app.gateway.GatewaySession
 import ai.openclaw.app.gateway.probeGatewayTlsFingerprint
 import ai.openclaw.app.node.*
 import ai.openclaw.app.protocol.OpenClawCanvasA2UIAction
+import ai.openclaw.app.vault.AuthDecision
+import ai.openclaw.app.vault.CloudAuthRequest
+import ai.openclaw.app.vault.CloudAuthResponse
+import ai.openclaw.app.vault.LeaseDuration
+import ai.openclaw.app.vault.PermissionLease
+import ai.openclaw.app.vault.PermissionLeaseManager
+import ai.openclaw.app.vault.QuietHoursConfig
+import ai.openclaw.app.vault.VaultRequestQueue
 import ai.openclaw.app.voice.MicCaptureManager
 import ai.openclaw.app.voice.TalkModeManager
 import ai.openclaw.app.voice.VoiceConversationEntry
@@ -34,6 +42,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -52,6 +61,14 @@ class NodeRuntime(
   private val deviceAuthStore = DeviceAuthStore(prefs)
   val canvas = CanvasController()
   val camera = CameraCaptureManager(appContext)
+
+  // Vault: permission lease manager backed by the app's secure prefs.
+  internal val leaseManager: PermissionLeaseManager by lazy {
+    PermissionLeaseManager(prefs = prefs.vaultPrefs())
+  }
+
+  // Vault: in-memory queue for YELLOW requests during quiet hours.
+  internal val vaultRequestQueue = VaultRequestQueue()
   val location = LocationCaptureManager(appContext)
   val sms = SmsManager(appContext)
   private val json = Json { ignoreUnknownKeys = true }
@@ -223,6 +240,16 @@ class NodeRuntime(
 
   private val _isForeground = MutableStateFlow(true)
   val isForeground: StateFlow<Boolean> = _isForeground.asStateFlow()
+
+  // Vault state -----------------------------------------------------------
+
+  /** Non-null when a cloud_auth_request is waiting for user biometric approval. */
+  private val _pendingVaultRequest = MutableStateFlow<CloudAuthRequest?>(null)
+  val pendingVaultRequest: StateFlow<CloudAuthRequest?> = _pendingVaultRequest.asStateFlow()
+
+  /** All known lease records (active + expired history). */
+  private val _vaultLeases = MutableStateFlow<List<PermissionLease>>(emptyList())
+  val vaultLeases: StateFlow<List<PermissionLease>> = _vaultLeases.asStateFlow()
 
   private var gatewayDefaultAgentId: String? = null
   private var gatewayAgents: List<GatewayAgentSummary> = emptyList()
@@ -941,6 +968,112 @@ class NodeRuntime(
     micCapture.handleGatewayEvent(event, payloadJson)
     talkMode.handleGatewayEvent(event, payloadJson)
     chat.handleGatewayEvent(event, payloadJson)
+    handleVaultEvent(event, payloadJson)
+  }
+
+  // -------------------------------------------------------------------------
+  // Vault event routing (M1)
+  // -------------------------------------------------------------------------
+
+  private fun handleVaultEvent(event: String, payloadJson: String?) {
+    if (event != "cloud_auth_request") return
+    if (payloadJson.isNullOrBlank()) return
+    val request =
+      try {
+        json.decodeFromString<CloudAuthRequest>(payloadJson)
+      } catch (_: Exception) {
+        Log.w("NodeRuntime", "vault: failed to parse cloud_auth_request payload")
+        return
+      }
+
+    val quietHours = QuietHoursConfig(
+      enabled = prefs.quietHoursEnabled.value,
+      startHour = prefs.quietHoursStartHour.value,
+      endHour = prefs.quietHoursEndHour.value,
+    )
+
+    // RED tier always breaks through quiet hours.
+    val shouldQueue = quietHours.isActive() && request.tier.supportsLease
+
+    if (shouldQueue) {
+      vaultRequestQueue.enqueue(request)
+      return
+    }
+
+    when (leaseManager.decide(request)) {
+      AuthDecision.AutoApprove -> {
+        // Auto-approve: record and respond immediately.
+        leaseManager.recordApproval(request.actionKey, request.tier)
+        refreshVaultLeases()
+        sendVaultResponse(CloudAuthResponse(requestId = request.requestId, approved = true))
+      }
+      AuthDecision.RequireBiometric -> {
+        // Surface the request for user biometric approval.
+        _pendingVaultRequest.value = request
+      }
+    }
+  }
+
+  /** Called by the UI after the user successfully passes biometric authentication. */
+  fun approveVaultRequest(leaseDuration: LeaseDuration?) {
+    val request = _pendingVaultRequest.value ?: return
+    val leaseMs: Long? =
+      if (leaseDuration != null && request.tier.supportsLease) {
+        leaseManager.grantLease(request.actionKey, request.tier, leaseDuration)
+          .also { refreshVaultLeases() }
+          .remainingMs.takeIf { it > 0 }
+      } else {
+        leaseManager.recordApproval(request.actionKey, request.tier)
+        refreshVaultLeases()
+        null
+      }
+    _pendingVaultRequest.value = null
+    sendVaultResponse(CloudAuthResponse(requestId = request.requestId, approved = true, leaseMs = leaseMs))
+  }
+
+  /** Called by the UI when the user taps Deny or biometric fails. */
+  fun denyVaultRequest() {
+    val request = _pendingVaultRequest.value ?: return
+    _pendingVaultRequest.value = null
+    sendVaultResponse(CloudAuthResponse(requestId = request.requestId, approved = false))
+  }
+
+  /** Revokes an active lease and refreshes the lease list. */
+  fun revokeVaultLease(actionKey: String) {
+    leaseManager.revokeLease(actionKey)
+    refreshVaultLeases()
+  }
+
+  /** Grants a lease upgrade from the AgentAnalyticsDashboard. */
+  fun upgradeVaultLease(actionKey: String, duration: LeaseDuration) {
+    val existing = leaseManager.loadLease(actionKey) ?: return
+    leaseManager.grantLease(actionKey, existing.tier, duration)
+    refreshVaultLeases()
+  }
+
+  private fun sendVaultResponse(response: CloudAuthResponse) {
+    val payload =
+      try {
+        json.encodeToString(response)
+      } catch (_: Exception) {
+        return
+      }
+    scope.launch {
+      try {
+        operatorSession.request("cloud_auth_response", payload)
+      } catch (_: Exception) {
+        Log.w("NodeRuntime", "vault: failed to send cloud_auth_response for ${response.requestId}")
+      }
+    }
+  }
+
+  /** Called from [MainViewModel] to send a batch-approved response without biometric. */
+  internal fun sendBatchApproval(requestId: String) {
+    sendVaultResponse(CloudAuthResponse(requestId = requestId, approved = true))
+  }
+
+  internal fun refreshVaultLeases() {
+    _vaultLeases.value = leaseManager.allLeases()
   }
 
   private fun parseChatSendRunId(response: String): String? {

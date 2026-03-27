@@ -20,7 +20,6 @@ jobs:
   # Preflight: establish routing truth and planner-owned matrices once, then let
   # real work fan out from a single source of truth.
   preflight:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 20
     outputs:
@@ -134,7 +133,6 @@ jobs:
   # Run the fast security/SCM checks in parallel with scope detection so the
   # main Node jobs do not have to wait for Python/pre-commit setup.
   security-fast:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 20
     env:

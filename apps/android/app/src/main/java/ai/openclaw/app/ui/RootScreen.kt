@@ -5,10 +5,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import ai.openclaw.app.MainActivity
 import ai.openclaw.app.MainViewModel
 
 @Composable
-fun RootScreen(viewModel: MainViewModel) {
+fun RootScreen(viewModel: MainViewModel, activity: MainActivity) {
   val onboardingCompleted by viewModel.onboardingCompleted.collectAsState()
 
   if (!onboardingCompleted) {
@@ -16,5 +17,5 @@ fun RootScreen(viewModel: MainViewModel) {
     return
   }
 
-  PostOnboardingTabs(viewModel = viewModel, modifier = Modifier.fillMaxSize())
+  PostOnboardingTabs(viewModel = viewModel, activity = activity, modifier = Modifier.fillMaxSize())
 }

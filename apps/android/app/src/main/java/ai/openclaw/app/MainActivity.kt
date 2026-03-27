@@ -2,20 +2,22 @@ package ai.openclaw.app
 
 import android.os.Bundle
 import android.view.WindowManager
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
-import androidx.core.view.WindowCompat
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import ai.openclaw.app.ui.RootScreen
 import ai.openclaw.app.ui.OpenClawTheme
+import ai.openclaw.app.vault.BiometricVault
+import ai.openclaw.app.vault.LeaseDuration
+import androidx.core.view.WindowCompat
 import kotlinx.coroutines.launch
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
   private val viewModel: MainViewModel by viewModels()
   private lateinit var permissionRequester: PermissionRequester
   private var didAttachRuntimeUi = false
@@ -55,10 +57,33 @@ class MainActivity : ComponentActivity() {
     setContent {
       OpenClawTheme {
         Surface(modifier = Modifier) {
-          RootScreen(viewModel = viewModel)
+          RootScreen(viewModel = viewModel, activity = this)
         }
       }
     }
+  }
+
+  /**
+   * Triggered by [VaultApprovalScreen] when the user taps "Scan fingerprint".
+   * The [onResult] callback is called on the main thread with the biometric outcome.
+   */
+  fun launchBiometricForVault(
+    title: String,
+    subtitle: String,
+    onResult: (approved: Boolean) -> Unit,
+  ) {
+    if (!BiometricVault.isAvailable(this)) {
+      // No biometric enrolled — fall back to approved=false so the user sees an error.
+      onResult(false)
+      return
+    }
+    BiometricVault.authenticate(
+      activity = this,
+      title = title,
+      subtitle = subtitle,
+      onSuccess = { onResult(true) },
+      onFailure = { onResult(false) },
+    )
   }
 
   override fun onStart() {
